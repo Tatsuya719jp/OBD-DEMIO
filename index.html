@@ -21,18 +21,25 @@
         .pupil { width: 25px; height: 30px; background-color: #004d40; border-radius: 50%; transition: transform 0.2s ease; }
         @keyframes blink { 0%, 96%, 100% { transform: scaleY(1); } 98% { transform: scaleY(0.1); } }
         .mouth {
-            position: absolute; bottom: 35px; left: 125px; width: 50px; height: 12px;
-            border: 4px solid #00ffcc; border-top: none; border-radius: 0 0 25px 25px; transition: all 0.2s ease;
+            position: absolute; bottom: 35px; left: 120px; width: 60px; height: 14px; transition: all 0.2s ease;
         }
+        /* ω の口：左右2つの小さな弧 */
+        .mouth::before, .mouth::after {
+            content: ""; position: absolute; top: 0; width: calc(50% + 2px); height: 100%; box-sizing: border-box;
+            border: 4px solid #00ffcc; border-top: none; border-radius: 0 0 16px 16px;
+        }
+        .mouth::before { left: 0; }
+        .mouth::after { right: 0; }
+
         .face.looking-left .pupil { transform: translateX(-12px); }
         .face.looking-right .pupil { transform: translateX(12px); }
         .face.happy { animation: bounce 0.6s infinite alternate ease-in-out; }
         .face.happy .eye { height: 35px; border-radius: 50% 50% 0 0; background-color: #00ffcc; animation: none; }
         .face.happy .pupil { display: none; }
-        .face.happy .mouth { height: 35px; bottom: 25px; border: 4px solid #00ffcc; border-radius: 50%; background-color: #00ffcc; }
+        .face.happy .mouth { height: 20px; bottom: 30px; }
         @keyframes bounce { 0% { transform: translateY(0) scale(1); } 100% { transform: translateY(-20px) scale(1.05); } }
         .mouth.speaking { animation: talk 0.2s infinite alternate; }
-        @keyframes talk { 0% { height: 10px; bottom: 35px; } 100% { height: 25px; bottom: 25px; border-radius: 50%; } }
+        @keyframes talk { 0% { height: 12px; bottom: 35px; } 100% { height: 28px; bottom: 25px; } }
         button {
             padding: 12px 20px; font-size: 14px; border: none; border-radius: 8px; background-color: #0077ff;
             color: white; cursor: pointer; font-weight: bold; margin: 10px; z-index: 10;
@@ -45,16 +52,18 @@
         }
         .metric { display: flex; flex-direction: column; align-items: center; }
         .metric .label { font-size: 16px; color: #999; margin-bottom: 4px; }
-        .metric .value { font-size: 40px; font-weight: bold; color: #00ffcc; line-height: 1.1; }
+        .metric .value { font-size: 34px; font-weight: bold; color: #00ffcc; line-height: 1.1; }
         .metric .unit { font-size: 16px; color: #777; margin-left: 4px; }
         .value.active { color: #ffcc00; }
         #debug {
-            display: none; position: fixed; top: 10px; right: 10px; width: 360px; max-width: 90vw; z-index: 20;
-            background: #000d; border: 1px solid #444; border-radius: 8px; padding: 8px; font-size: 11px;
+            display: none; position: fixed; top: 8px; left: 8px; right: 8px; height: 75vh; z-index: 20;
+            flex-direction: column; box-sizing: border-box;
+            background: #000e; border: 1px solid #444; border-radius: 8px; padding: 10px; font-size: 15px;
         }
-        #debug pre { height: 200px; overflow-y: auto; margin: 0 0 6px; color: #9f9; white-space: pre-wrap; }
-        #debug input { width: 65%; padding: 6px; background: #222; color: #fff; border: 1px solid #555; }
-        #debug button { padding: 6px 10px; margin: 0 0 0 4px; font-size: 12px; }
+        #debug .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
+        #debug pre { flex: 1; overflow-y: auto; margin: 0 0 8px; color: #9f9; white-space: pre-wrap; word-break: break-all; font-size: 14px; }
+        #debug input { flex: 1; min-width: 120px; padding: 10px; font-size: 15px; background: #222; color: #fff; border: 1px solid #555; }
+        #debug button { padding: 10px 14px; margin: 0; font-size: 14px; }
     </style>
 </head>
 <body>
@@ -68,15 +77,23 @@
         <div>
             <button onclick="connectVeepeak()">🚗 Veepeakと接続</button>
             <button onclick="startDemo()" style="background-color: #ff9900;">▶ デモ走行開始</button>
+            <button onclick="disconnectVeepeak()" style="background-color: #cc3333;">⏹ 終了</button>
             <button onclick="toggleDebug()" style="background-color: #444;">🛠 ログ</button>
         </div>
     </div>
 
     <div id="debug">
+        <div class="bar">
+            <button onclick="scanPids()">PID診断</button>
+            <button onclick="copyLog()" style="background-color:#555;">コピー</button>
+            <button onclick="document.getElementById('log').textContent=''" style="background-color:#555;">消去</button>
+            <button onclick="toggleDebug()" style="background-color:#cc3333; margin-left:auto;">✕ 閉じる</button>
+        </div>
         <pre id="log"></pre>
-        <input id="rawcmd" placeholder="例: 0105 / 0100 / 22XXXX">
-        <button onclick="sendRaw()">送信</button>
-        <button onclick="scanPids()">PID診断</button>
+        <div class="bar">
+            <input id="rawcmd" placeholder="例: 0105 / 0100 / 22XXXX">
+            <button onclick="sendRaw()">送信</button>
+        </div>
     </div>
 
     <div class="dashboard">
@@ -88,6 +105,9 @@
         <div class="metric"><span class="label">PM堆積</span><div><span class="value" id="val-pm">--</span><span class="unit">g/l</span></div></div>
         <div class="metric"><span class="label">再生後距離</span><div><span class="value" id="val-dpfdist">--</span><span class="unit">km</span></div></div>
         <div class="metric"><span class="label">バッテリー</span><div><span class="value" id="val-batt">--</span><span class="unit">%</span></div></div>
+        <div class="metric"><span class="label">回転数</span><div><span class="value" id="val-rpm">--</span><span class="unit">rpm</span></div></div>
+        <div class="metric"><span class="label">車速</span><div><span class="value" id="val-speed">--</span><span class="unit">km/h</span></div></div>
+        <div class="metric"><span class="label">外気温</span><div><span class="value" id="val-ambient">--</span><span class="unit">℃</span></div></div>
         <div class="metric"><span class="label">DPF再生</span><div><span class="value" id="val-dpf" style="color:#555;">OFF</span></div></div>
     </div>
 
@@ -117,47 +137,83 @@
             setTimeout(() => { face.classList.remove('happy'); }, duration);
         }
 
-        // --- 音声合成 ---
-        async function speak(text, callback) {
-            const speakerId = 3;
-            currentSpeakId++;
-            const mySpeakId = currentSpeakId;
+        // --- 音声合成（キュー方式：前のセリフを言い終わってから次を話す）---
+        const speechQueue = [];
+        let speaking = false, finishCurrent = null;
+
+        function speak(text, callback) {
+            speechQueue.push({ text, callback });
+            while (speechQueue.length > 3) speechQueue.shift(); // 溜まりすぎたら古いものを捨てる
+            if (!speaking) processQueue();
+        }
+
+        async function processQueue() {
+            speaking = true;
+            while (speechQueue.length) {
+                const item = speechQueue.shift();
+                await speakOne(item.text);
+                if (item.callback) item.callback();
+            }
+            speaking = false;
+            mouth.classList.remove('speaking');
+        }
+
+        // 話している途中でも、今のセリフとキューをすべて止める
+        function stopSpeaking() {
+            speechQueue.length = 0;
+            if (finishCurrent) finishCurrent();
             window.speechSynthesis.cancel();
             voicePlayer.pause();
             voicePlayer.removeAttribute('src');
             voicePlayer.load();
-            try {
-                mouth.classList.add('speaking');
-                const url = `https://api.tts.quest/v3/voicevox/synthesis?text=${encodeURIComponent(text)}&speaker=${speakerId}`;
-                const response = await fetch(url);
-                const data = await response.json();
-                if (mySpeakId !== currentSpeakId) return;
-                if (data.mp3StreamingUrl) {
-                    voicePlayer.src = data.mp3StreamingUrl;
-                    voicePlayer.onended = () => { mouth.classList.remove('speaking'); if (callback) callback(); };
-                    try { await voicePlayer.play(); } catch (playErr) { console.warn("再生がキャンセルされました", playErr); }
-                } else { throw new Error("音声URLがありません"); }
-            } catch (error) {
-                if (mySpeakId !== currentSpeakId) return;
-                console.warn("VOICEVOX通信エラー。予備音声に切り替え:", error);
-                fallbackSpeak(text, callback);
-            }
         }
 
-        function fallbackSpeak(text, callback) {
-            window.speechSynthesis.cancel();
-            const uttr = new SpeechSynthesisUtterance(text);
-            uttr.lang = 'ja-JP'; uttr.pitch = 1.4; uttr.rate = 1.1;
-            uttr.onstart = () => mouth.classList.add('speaking');
-            uttr.onend = () => { mouth.classList.remove('speaking'); if (callback) callback(); };
-            window.speechSynthesis.speak(uttr);
+        function speakOne(text) {
+            return new Promise(resolve => {
+                let done = false;
+                const finish = () => {
+                    if (done) return;
+                    done = true; clearTimeout(guard); finishCurrent = null;
+                    mouth.classList.remove('speaking');
+                    resolve();
+                };
+                const guard = setTimeout(finish, 30000); // 万一終わらなくても先へ進む
+                finishCurrent = finish;
+                mouth.classList.add('speaking');
+                (async () => {
+                    try {
+                        const url = `https://api.tts.quest/v3/voicevox/synthesis?text=${encodeURIComponent(text)}&speaker=3`;
+                        const data = await (await fetch(url)).json();
+                        if (done) return;
+                        if (!data.mp3StreamingUrl) throw new Error("音声URLがありません");
+                        voicePlayer.onended = finish;
+                        voicePlayer.onerror = () => { if (!done) fallbackSpeak(text).then(finish); };
+                        voicePlayer.src = data.mp3StreamingUrl;
+                        await voicePlayer.play();
+                    } catch (error) {
+                        if (done) return;
+                        console.warn("VOICEVOX通信エラー。予備音声に切り替え:", error);
+                        fallbackSpeak(text).then(finish);
+                    }
+                })();
+            });
+        }
+
+        function fallbackSpeak(text) {
+            return new Promise(resolve => {
+                window.speechSynthesis.cancel();
+                const uttr = new SpeechSynthesisUtterance(text);
+                uttr.lang = 'ja-JP'; uttr.pitch = 1.4; uttr.rate = 1.1;
+                uttr.onend = resolve; uttr.onerror = resolve;
+                window.speechSynthesis.speak(uttr);
+            });
         }
 
         // --- 画面スリープ防止 ---
-        let wakeLock = null;
+        let wakeLock = null, wakeAllowed = true;
         async function keepAwake() {
             try {
-                if ('wakeLock' in navigator && !wakeLock) {
+                if (wakeAllowed && 'wakeLock' in navigator && !wakeLock) {
                     wakeLock = await navigator.wakeLock.request('screen');
                     wakeLock.addEventListener('release', () => { wakeLock = null; });
                 }
@@ -174,7 +230,88 @@
         function updateUI(id, value) { document.getElementById(id).innerText = value; }
 
         let pmWarned = false, distWarned = false, lastKm = null;
+        // 過給圧の警告（ゲージ圧 kPa）。数値は走りに合わせて調整してください
+        const BOOST_LIMIT = 80, BOOST_COOLDOWN = 60000;
+        const BOOST_LINES = [
+            "過給圧が高いのだ！踏みすぎなのだ！",
+            "ターボがブンブン回ってるのだ！踏みすぎなのだ！",
+            "そんなに踏んだら燃費が悪くなるのだ！"
+        ];
+        // 水温・油温・回転数の警告。数値は車に合わせて調整してください
+        const WATER_HIGH = 105, OIL_HIGH = 130, REV_LIMIT = 4800, REV_COOLDOWN = 30000;
+        const INTAKE_MARGIN = 15;
+        let waterHighWarned = false, oilHighWarned = false, lastRevWarn = 0;
+        let intakeWarned = false, engineRunning = null, idleStopSince = 0, idleStopCount = 0, idleStopTotal = 0, speedLevel = 0;
+        let coldWarned = false, hotWarned = false;
+        let boostOverCount = 0, lastBoostWarn = 0;
         function checkExtras(data) {
+            if (data.ambient !== undefined && !isNaN(data.ambient)) {
+                if (!coldWarned && data.ambient <= 3) { coldWarned = true; speak(`外気温が${Math.round(data.ambient)}度なのだ。路面の凍結に注意なのだ！`); }
+                if (coldWarned && data.ambient > 6) coldWarned = false;
+                if (!hotWarned && data.ambient >= 33) { hotWarned = true; speak(`外気温が${Math.round(data.ambient)}度なのだ。暑いから水分補給するのだ！`); }
+                if (hotWarned && data.ambient < 30) hotWarned = false;
+            }
+            if (data.waterTemp !== undefined) {
+                if (!waterHighWarned && data.waterTemp >= WATER_HIGH) {
+                    waterHighWarned = true;
+                    speak("水温が高くなってきたのだ！ちょっとゆっくり走るのだ！");
+                }
+                if (waterHighWarned && data.waterTemp < WATER_HIGH - 5) waterHighWarned = false;
+            }
+            if (data.oilTemp !== undefined && !isNaN(data.oilTemp)) {
+                if (!oilHighWarned && data.oilTemp >= OIL_HIGH) {
+                    oilHighWarned = true;
+                    speak("油温が高くなってきたのだ！エンジンオイルが心配なのだ！");
+                }
+                if (oilHighWarned && data.oilTemp < OIL_HIGH - 10) oilHighWarned = false;
+            }
+            if (data.rpm !== undefined && data.rpm >= REV_LIMIT && Date.now() - lastRevWarn > REV_COOLDOWN) {
+                lastRevWarn = Date.now();
+                speak("レブに当たりそうだったのだ！回しすぎなのだ！");
+            }
+
+            // 吸気温度が外気温より高くなった
+            if (data.intakeTemp !== undefined && data.ambient !== undefined && !isNaN(data.intakeTemp)) {
+                const diff = data.intakeTemp - data.ambient;
+                if (!intakeWarned && diff >= INTAKE_MARGIN) {
+                    intakeWarned = true;
+                    speak(`吸気温度が外気温を超えたのだ！吸気が${Math.round(data.intakeTemp)}度で、外は${Math.round(data.ambient)}度なのだ。`);
+                }
+                if (intakeWarned && diff < INTAKE_MARGIN - 5) intakeWarned = false;
+            }
+
+            // アイドリングストップ検出（回転数0かつ停車中＝ECUは応答しているのでアイストと判断）
+            if (data.rpm !== undefined) {
+                const running = data.rpm >= 300;
+                if (engineRunning === null) {
+                    engineRunning = running;
+                } else if (engineRunning && !running && (data.speed ?? 0) === 0) {
+                    engineRunning = false; idleStopSince = Date.now(); idleStopCount++;
+                    speak(idleStopCount === 1 ? "アイドリングストップなのだ！エンジンを休ませるのだ。"
+                        : `アイドリングストップなのだ！今日${idleStopCount}回目なのだ！`);
+                } else if (!engineRunning && running) {
+                    engineRunning = true;
+                    const sec = Math.round((Date.now() - idleStopSince) / 1000);
+                    if (idleStopSince) { idleStopTotal += sec; speak(`エンジン再始動なのだ！${sec}秒止まってたのだ。合計${idleStopTotal}秒節約したのだ！`); }
+                }
+            }
+
+            // 速度
+            if (data.speed !== undefined) {
+                const level = data.speed >= 120 ? 2 : data.speed >= 100 ? 1 : 0;
+                if (level > speedLevel) {
+                    speedLevel = level;
+                    speak(level === 2 ? "時速120キロを超えたのだ！速すぎなのだ！" : "時速100キロを超えたのだ！安全運転なのだ！");
+                }
+                if (data.speed < 90) speedLevel = 0;
+            }
+            if (data.boost !== undefined && !isNaN(data.boost)) {
+                boostOverCount = data.boost >= BOOST_LIMIT ? boostOverCount + 1 : 0;
+                if (boostOverCount >= 2 && Date.now() - lastBoostWarn > BOOST_COOLDOWN) {
+                    lastBoostWarn = Date.now();
+                    speak(BOOST_LINES[Math.floor(Math.random() * BOOST_LINES.length)]);
+                }
+            }
             const pmMax = Math.max(data.pm ?? 0, data.pmGen ?? 0);
             if (data.pm !== undefined || data.pmGen !== undefined) {
                 if (!pmWarned && pmMax >= 6) {
@@ -245,6 +382,9 @@
               parse: b => Math.round(((b[1] << 16) + (b[2] << 8) + b[3]) * 100 / 65536) },
             { key: 'dpfStatus',  cmd: '220380', every: 2, parse: b => ((b[0] >> 1) & 1) === 1 },
             { key: 'waterTemp',  cmd: '0105',   every: 1, ui: 'val-watertemp', parse: b => b[0] - 40 },
+            { key: 'rpm',        cmd: '010C',   every: 1, ui: 'val-rpm', parse: b => (b[0] * 256 + b[1]) / 4 },
+            { key: 'speed',      cmd: '010D',   every: 1, ui: 'val-speed', parse: b => b[0] },
+            { key: 'ambient',    cmd: '0146',   every: 30, ui: 'val-ambient', parse: b => b[0] - 40 },
             { key: 'imap',       cmd: '22F470', every: 1, parse: b => (b[3] * 256 + b[4]) / 32 },   // 吸気マニ絶対圧 kPa
             { key: 'baro',       cmd: '0133',   every: 30, parse: b => b[0] },
             { key: 'boost',      derive: d => (d.imap !== undefined && d.baro !== undefined) ? d.imap - d.baro : undefined, ui: 'val-boost' },
@@ -266,12 +406,16 @@
         function log(s) {
             const el = document.getElementById('log');
             el.textContent += s + '\n';
-            if (el.textContent.length > 6000) el.textContent = el.textContent.slice(-4000);
+            if (el.textContent.length > 30000) el.textContent = el.textContent.slice(-20000);
             el.scrollTop = el.scrollHeight;
+        }
+        function copyLog() {
+            const t = document.getElementById('log').textContent;
+            (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => log('--- コピーしました ---')).catch(() => log('--- コピー失敗（文字を長押しで選択してください）---'));
         }
         function toggleDebug() {
             const d = document.getElementById('debug');
-            d.style.display = d.style.display === 'block' ? 'none' : 'block';
+            d.style.display = d.style.display === 'flex' ? 'none' : 'flex';
         }
         async function sendRaw() {
             const inp = document.getElementById('rawcmd');
@@ -383,7 +527,7 @@
         ];
         async function scanPids() {
             if (!connected) { speak("先にVeepeakとつなぐのだ。"); return; }
-            document.getElementById('debug').style.display = 'block';
+            document.getElementById('debug').style.display = 'flex';
             scanning = true;
             log('--- PID診断 開始 ---');
             const list = PIDS.filter(p => p.cmd && p.enabled !== false).map(p => [p.cmd, p.key]).concat(SCAN_EXTRA);
@@ -396,8 +540,62 @@
             speak("PIDの診断が終わったのだ。ログを見てほしいのだ。");
         }
 
+        // おしゃべり（雑談）と休憩リマインド
+        const CHAT_LINES = [
+            "安全運転で行くのだ！", "ずんだ餅が食べたいのだ！", "ドライブ楽しいのだ！",
+            "眠くなったら、ちゃんと休憩するのだ！", "シートベルトはしてるのだ？", "燃費のいい運転を心がけるのだ！",
+            "車間距離は大事なのだ！", "ボクはずっと見てるのだ。キョロキョロ。", "デミオは今日も元気なのだ！", "ちょっと喉がかわいたのだ。"
+        ];
+        let breakTimer = null, chatTimer = null, nextChatAt = 0, driveHours = 0;
+        function startChatter() {
+            stopChatter();
+            nextChatAt = Date.now() + 240000;
+            chatTimer = setInterval(() => {
+                if (!connected || speaking || Date.now() < nextChatAt) return;
+                nextChatAt = Date.now() + 180000 + Math.random() * 180000;
+                speak(CHAT_LINES[Math.floor(Math.random() * CHAT_LINES.length)]);
+            }, 15000);
+            breakTimer = setInterval(() => {
+                if (!connected) return;
+                driveHours++;
+                speak(`もう${driveHours}時間走ってるのだ。そろそろ休憩するのだ！`);
+            }, 3600000);
+        }
+        function stopChatter() {
+            clearInterval(chatTimer); clearInterval(breakTimer);
+            chatTimer = breakTimer = null; driveHours = 0;
+        }
+        function resetEvents() {
+            waterHighWarned = oilHighWarned = intakeWarned = coldWarned = hotWarned = false;
+            engineRunning = null; idleStopSince = 0; idleStopCount = 0; idleStopTotal = 0; speedLevel = 0;
+            boostOverCount = 0; lastBoostWarn = 0; lastRevWarn = 0;
+        }
+
+        // 接続を終了して表示を初期状態に戻す
+        function disconnectVeepeak() {
+            if (demoInterval) { clearInterval(demoInterval); demoInterval = null; }
+            const wasConnected = connected;
+            connected = false;
+            stopChatter(); resetEvents();
+            scanning = false;
+            try { if (bleDevice && bleDevice.gatt.connected) bleDevice.gatt.disconnect(); } catch (e) { console.warn(e); }
+            pending = null; rxBuf = ''; chain = Promise.resolve();
+            for (const k of Object.keys(vehicle)) delete vehicle[k];
+            ['val-watertemp','val-intaketemp','val-boost','val-oiltemp','val-egt','val-pm','val-dpfdist','val-batt','val-rpm','val-speed','val-ambient']
+                .forEach(id => updateUI(id, '--'));
+            const dpf = document.getElementById('val-dpf');
+            dpf.innerText = 'OFF'; dpf.classList.remove('active');
+            isColdEngine = true; isDpfRegenerating = false; pmWarned = false; distWarned = false; lastKm = null;
+            wakeAllowed = false;
+            if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+            clearExpression();
+            stopSpeaking();
+            speak(wasConnected ? "おつかれさまなのだ！また一緒に走るのだ！" : "つながってないのだ。");
+        }
+
         async function connectVeepeak() {
             if (!navigator.bluetooth) { speak("このブラウザはBluetoothに対応していないのだ。"); return; }
+            wakeAllowed = true; keepAwake();
             if (demoInterval) { clearInterval(demoInterval); demoInterval = null; }
             speak("Veepeakを探しているのだ。キョロキョロ。");
             face.classList.add('looking-left');
@@ -412,6 +610,7 @@
                     if (!connected) return;
                     connected = false;
                     log('切断されました');
+                    stopChatter();
                     speak("Bluetoothが切れちゃったのだ。もう一度つないでほしいのだ。");
                 });
 
@@ -448,6 +647,7 @@
                 clearExpression();
                 triggerHappyMode(5000);
                 speak("接続完了なのだ！デミオとリンク完了、今日も安全運転で行くのだ！");
+                resetEvents(); startChatter();
                 pollLoop();
 
             } catch (error) {
@@ -465,10 +665,11 @@
             if (demoInterval) clearInterval(demoInterval);
             isColdEngine = true;
             isDpfRegenerating = false;
+            resetEvents();
             triggerHappyMode(3000);
             speak("デモ走行、スタートなのだ！");
 
-            let simData = { waterTemp: 45, intaketemp: 25, boost: -60, oiltemp: 40, oilpress: 200, dpfStatus: false, dpfDistance: 215, pm: 4, egt: 120, battery: 78 };
+            let simData = { waterTemp: 45, intaketemp: 25, boost: -60, oiltemp: 40, oilpress: 200, dpfStatus: false, dpfDistance: 215, pm: 4, egt: 120, battery: 78, ambient: 22, speed: 40, rpm: 1500 };
             let tick = 0;
             demoInterval = setInterval(() => {
                 tick++;
@@ -477,6 +678,11 @@
                 simData.boost = Math.floor(Math.random() * 100) - 50;
                 simData.oilpress = 150 + Math.floor(Math.random() * 100);
                 simData.pm = Math.min(7, simData.pm + 0.15); simData.egt = Math.min(350, simData.egt + 8);
+                if (tick === 15 || tick === 16) simData.boost = 95;
+                if (tick === 12) simData.intaketemp = 45;
+                simData.intakeTemp = simData.intaketemp;
+                simData.speed = (tick >= 21 && tick <= 23) ? 0 : (tick === 28 ? 105 : 40 + Math.floor(Math.random() * 20));
+                simData.rpm = (tick === 19) ? 5000 : (tick >= 21 && tick <= 23) ? 0 : 1500 + Math.floor(Math.random() * 800);
                 if (tick === 10) simData.dpfStatus = true;
                 if (tick === 25) simData.dpfStatus = false;
                 updateUI('val-watertemp', Math.floor(simData.waterTemp));
@@ -487,6 +693,9 @@
                 updateUI('val-egt', Math.floor(simData.egt));
                 updateUI('val-dpfdist', simData.dpfDistance);
                 updateUI('val-batt', simData.battery);
+                updateUI('val-rpm', simData.rpm);
+                updateUI('val-speed', simData.speed);
+                updateUI('val-ambient', simData.ambient);
                 checkVehicleStatus(simData);
             }, 1000);
         }
