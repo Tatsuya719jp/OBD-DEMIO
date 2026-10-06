@@ -257,7 +257,7 @@
             { key: 'totalDist',  cmd: '22DD01', every: 60, parse: b => (b[0] << 16) + (b[1] << 8) + b[2] }
         ];
 
-        let bleDevice = null, writeChar = null, notifyChars = [];
+        let bleDevice = null, writeChar = null, notifyChars = [], writeCands = [];
         let connected = false;
         let rxBuf = '', pending = null, chain = Promise.resolve();
         const decoder = new TextDecoder(), encoder = new TextEncoder();
@@ -331,8 +331,14 @@
         }
 
         async function initElm() {
-            let z = await send('ATZ', 5000);
-            if (z === 'TIMEOUT') z = await send('ATZ', 5000);
+            // 書き込み先の候補を順に試し、応答が返るものを採用する
+            let z = 'TIMEOUT';
+            for (const cand of writeCands) {
+                writeChar = cand;
+                log(`書込先を試行: ${cand.uuid}`);
+                z = await send('ATZ', 4000);
+                if (z !== 'TIMEOUT' && z !== 'ERR') break;
+            }
             for (const c of ['ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATSP0']) await send(c);
             const r = await send('0100', 12000); // プロトコル自動検出
             if (/UNABLE|ERROR|TIMEOUT|ERR/i.test(r)) return false;
@@ -411,14 +417,16 @@
 
                 const server = await bleDevice.gatt.connect();
                 const services = await server.getPrimaryServices();
-                writeChar = null; notifyChars = [];
-                // 同じサービスの中に Notify と Write が揃っているものを使う
-                for (const s of services) {
-                    const chars = await s.getCharacteristics();
-                    chars.forEach(c => log(`char ${s.uuid.slice(4, 8)}/${c.uuid.slice(4, 8)} [${Object.keys(c.properties).filter(k => c.properties[k]).join(',')}]`));
-                    const ns = chars.filter(c => c.properties.notify || c.properties.indicate);
-                    const w = chars.find(c => c.properties.write || c.properties.writeWithoutResponse);
-                    if (ns.length && w) { notifyChars = ns; writeChar = w; log(`使用サービス: ${s.uuid.slice(4, 8)} / 書込: ${w.uuid.slice(4, 8)}`); break; }
+                writeChar = null; notifyChars = []; writeCands = [];
+                // 同じサービスにNotifyとWriteが揃っているものを使う。Notify兼Writeの通信口を最優先にする
+                for (const sv of services) {
+                    const chars = await sv.getCharacteristics();
+                    chars.forEach(c => log(`char ${sv.uuid} / ${c.uuid} [${Object.keys(c.properties).filter(k => c.properties[k]).join(',')}]`));
+                    const isW = c => c.properties.write || c.properties.writeWithoutResponse;
+                    const isN = c => c.properties.notify || c.properties.indicate;
+                    const ns = chars.filter(isN);
+                    const ws = chars.filter(isW).sort((x, y) => (isN(y) ? 1 : 0) - (isN(x) ? 1 : 0));
+                    if (ns.length && ws.length) { notifyChars = ns; writeCands = ws; writeChar = ws[0]; log(`使用サービス: ${sv.uuid}`); break; }
                 }
                 if (!notifyChars.length || !writeChar) throw new Error("Tx/Rxが見つかりません");
 
