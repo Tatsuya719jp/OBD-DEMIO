@@ -153,6 +153,20 @@
             window.speechSynthesis.speak(uttr);
         }
 
+        // --- 画面スリープ防止 ---
+        let wakeLock = null;
+        async function keepAwake() {
+            try {
+                if ('wakeLock' in navigator && !wakeLock) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    wakeLock.addEventListener('release', () => { wakeLock = null; });
+                }
+            } catch (e) { console.warn('WakeLock失敗', e); }
+        }
+        document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') keepAwake(); });
+        document.addEventListener('click', keepAwake);
+        keepAwake();
+
         // --- 状態管理 ---
         let isColdEngine = true;
         let isDpfRegenerating = false;
@@ -243,7 +257,7 @@
             { key: 'totalDist',  cmd: '22DD01', every: 60, parse: b => (b[0] << 16) + (b[1] << 8) + b[2] }
         ];
 
-        let bleDevice = null, writeChar = null, notifyChar = null;
+        let bleDevice = null, writeChar = null, notifyChars = [];
         let connected = false;
         let rxBuf = '', pending = null, chain = Promise.resolve();
         const decoder = new TextDecoder(), encoder = new TextEncoder();
@@ -266,7 +280,9 @@
         }
 
         function onNotify(ev) {
-            rxBuf += decoder.decode(ev.target.value);
+            const chunk = decoder.decode(ev.target.value);
+            log('RX: ' + JSON.stringify(chunk));
+            rxBuf += chunk;
             if (rxBuf.includes('>')) {
                 const r = rxBuf; rxBuf = '';
                 if (pending) { const p = pending; pending = null; p(r); }
@@ -277,7 +293,7 @@
             const bytes = encoder.encode(str);
             for (let i = 0; i < bytes.length; i += 20) {
                 const chunk = bytes.slice(i, i + 20);
-                if (writeChar.writeValueWithoutResponse) await writeChar.writeValueWithoutResponse(chunk);
+                if (writeChar.properties.writeWithoutResponse) await writeChar.writeValueWithoutResponse(chunk);
                 else await writeChar.writeValue(chunk);
             }
         }
@@ -286,7 +302,7 @@
         function send(cmd, timeout = 4000) {
             chain = chain.then(() => new Promise(resolve => {
                 rxBuf = '';
-                const t = setTimeout(() => { pending = null; log(`${cmd} -> TIMEOUT`); resolve('TIMEOUT'); }, timeout);
+                const t = setTimeout(() => { pending = null; log(`${cmd} -> TIMEOUT (受信済み: ${JSON.stringify(rxBuf)})`); resolve('TIMEOUT'); }, timeout);
                 pending = r => { clearTimeout(t); log(`${cmd} -> ${r.replace(/[\r\n>]+/g, ' ').trim()}`); resolve(r); };
                 writeChunks(cmd + '\r').catch(e => { clearTimeout(t); pending = null; log(`${cmd} -> ERR ${e}`); resolve('ERR'); });
             }));
@@ -315,7 +331,8 @@
         }
 
         async function initElm() {
-            await send('ATZ', 4000);
+            let z = await send('ATZ', 5000);
+            if (z === 'TIMEOUT') z = await send('ATZ', 5000);
             for (const c of ['ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATSP0']) await send(c);
             const r = await send('0100', 12000); // プロトコル自動検出
             if (/UNABLE|ERROR|TIMEOUT|ERR/i.test(r)) return false;
@@ -394,18 +411,22 @@
 
                 const server = await bleDevice.gatt.connect();
                 const services = await server.getPrimaryServices();
-                writeChar = notifyChar = null;
+                writeChar = null; notifyChars = [];
+                // 同じサービスの中に Notify と Write が揃っているものを使う
                 for (const s of services) {
-                    for (const c of await s.getCharacteristics()) {
-                        log(`char ${s.uuid.slice(4, 8)}/${c.uuid.slice(4, 8)}`);
-                        if (!notifyChar && (c.properties.notify || c.properties.indicate)) notifyChar = c;
-                        if (!writeChar && (c.properties.write || c.properties.writeWithoutResponse)) writeChar = c;
-                    }
+                    const chars = await s.getCharacteristics();
+                    chars.forEach(c => log(`char ${s.uuid.slice(4, 8)}/${c.uuid.slice(4, 8)} [${Object.keys(c.properties).filter(k => c.properties[k]).join(',')}]`));
+                    const ns = chars.filter(c => c.properties.notify || c.properties.indicate);
+                    const w = chars.find(c => c.properties.write || c.properties.writeWithoutResponse);
+                    if (ns.length && w) { notifyChars = ns; writeChar = w; log(`使用サービス: ${s.uuid.slice(4, 8)} / 書込: ${w.uuid.slice(4, 8)}`); break; }
                 }
-                if (!notifyChar || !writeChar) throw new Error("Tx/Rxが見つかりません");
+                if (!notifyChars.length || !writeChar) throw new Error("Tx/Rxが見つかりません");
 
-                await notifyChar.startNotifications();
-                notifyChar.addEventListener('characteristicvaluechanged', onNotify);
+                for (const c of notifyChars) {
+                    await c.startNotifications();
+                    c.addEventListener('characteristicvaluechanged', onNotify);
+                }
+                await new Promise(r => setTimeout(r, 800));
                 connected = true;
 
                 const ok = await initElm();
