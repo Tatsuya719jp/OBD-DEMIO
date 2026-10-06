@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>デミオ専用マスコット（ずんだもん仕様・OBD2通信対応）</title>
+    <style>
+        body {
+            background-color: #1a1a1a; color: white; display: flex; flex-direction: column;
+            align-items: center; justify-content: space-between; height: 100vh; margin: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden;
+        }
+        .mascot-area { flex-grow: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; }
+        .face { position: relative; width: 300px; height: 200px; transition: transform 0.3s; }
+        .eye {
+            position: absolute; top: 50px; width: 50px; height: 60px; background-color: #00ffcc; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center; overflow: hidden;
+            transition: all 0.2s ease-in-out; animation: blink 4s infinite;
+        }
+        .eye.left { left: 45px; } .eye.right { right: 45px; }
+        .pupil { width: 25px; height: 30px; background-color: #004d40; border-radius: 50%; transition: transform 0.2s ease; }
+        @keyframes blink { 0%, 96%, 100% { transform: scaleY(1); } 98% { transform: scaleY(0.1); } }
+        .mouth {
+            position: absolute; bottom: 35px; left: 125px; width: 50px; height: 12px;
+            border: 4px solid #00ffcc; border-top: none; border-radius: 0 0 25px 25px; transition: all 0.2s ease;
+        }
+        .face.looking-left .pupil { transform: translateX(-12px); }
+        .face.looking-right .pupil { transform: translateX(12px); }
+        .face.happy { animation: bounce 0.6s infinite alternate ease-in-out; }
+        .face.happy .eye { height: 35px; border-radius: 50% 50% 0 0; background-color: #00ffcc; animation: none; }
+        .face.happy .pupil { display: none; }
+        .face.happy .mouth { height: 35px; bottom: 25px; border: 4px solid #00ffcc; border-radius: 50%; background-color: #00ffcc; }
+        @keyframes bounce { 0% { transform: translateY(0) scale(1); } 100% { transform: translateY(-20px) scale(1.05); } }
+        .mouth.speaking { animation: talk 0.2s infinite alternate; }
+        @keyframes talk { 0% { height: 10px; bottom: 35px; } 100% { height: 25px; bottom: 25px; border-radius: 50%; } }
+        button {
+            padding: 12px 20px; font-size: 14px; border: none; border-radius: 8px; background-color: #0077ff;
+            color: white; cursor: pointer; font-weight: bold; margin: 10px; z-index: 10;
+        }
+        button:active { background-color: #0055cc; }
+        .dashboard {
+            width: 100%; box-sizing: border-box; background-color: #0d0d0d; border-top: 2px solid #333;
+            display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px 10px;
+            padding: 16px 24px; box-shadow: 0 -5px 15px rgba(0,0,0,0.5);
+        }
+        .metric { display: flex; flex-direction: column; align-items: center; }
+        .metric .label { font-size: 16px; color: #999; margin-bottom: 4px; }
+        .metric .value { font-size: 40px; font-weight: bold; color: #00ffcc; line-height: 1.1; }
+        .metric .unit { font-size: 16px; color: #777; margin-left: 4px; }
+        .value.active { color: #ffcc00; }
+        #debug {
+            display: none; position: fixed; top: 10px; right: 10px; width: 360px; max-width: 90vw; z-index: 20;
+            background: #000d; border: 1px solid #444; border-radius: 8px; padding: 8px; font-size: 11px;
+        }
+        #debug pre { height: 200px; overflow-y: auto; margin: 0 0 6px; color: #9f9; white-space: pre-wrap; }
+        #debug input { width: 65%; padding: 6px; background: #222; color: #fff; border: 1px solid #555; }
+        #debug button { padding: 6px 10px; margin: 0 0 0 4px; font-size: 12px; }
+    </style>
+</head>
+<body>
+
+    <div class="mascot-area">
+        <div class="face" id="mascot-face">
+            <div class="eye left"><div class="pupil"></div></div>
+            <div class="eye right"><div class="pupil"></div></div>
+            <div class="mouth" id="mouth"></div>
+        </div>
+        <div>
+            <button onclick="connectVeepeak()">🚗 Veepeakと接続</button>
+            <button onclick="startDemo()" style="background-color: #ff9900;">▶ デモ走行開始</button>
+            <button onclick="toggleDebug()" style="background-color: #444;">🛠 ログ</button>
+        </div>
+    </div>
+
+    <div id="debug">
+        <pre id="log"></pre>
+        <input id="rawcmd" placeholder="例: 0105 / 0100 / 22XXXX">
+        <button onclick="sendRaw()">送信</button>
+        <button onclick="scanPids()">PID診断</button>
+    </div>
+
+    <div class="dashboard">
+        <div class="metric"><span class="label">水温</span><div><span class="value" id="val-watertemp">--</span><span class="unit">℃</span></div></div>
+        <div class="metric"><span class="label">吸気温度</span><div><span class="value" id="val-intaketemp">--</span><span class="unit">℃</span></div></div>
+        <div class="metric"><span class="label">過給圧</span><div><span class="value" id="val-boost">--</span><span class="unit">kPa</span></div></div>
+        <div class="metric"><span class="label">油温</span><div><span class="value" id="val-oiltemp">--</span><span class="unit">℃</span></div></div>
+        <div class="metric"><span class="label">排気温(DPF)</span><div><span class="value" id="val-egt">--</span><span class="unit">℃</span></div></div>
+        <div class="metric"><span class="label">PM堆積</span><div><span class="value" id="val-pm">--</span><span class="unit">g/l</span></div></div>
+        <div class="metric"><span class="label">再生後距離</span><div><span class="value" id="val-dpfdist">--</span><span class="unit">km</span></div></div>
+        <div class="metric"><span class="label">バッテリー</span><div><span class="value" id="val-batt">--</span><span class="unit">%</span></div></div>
+        <div class="metric"><span class="label">DPF再生</span><div><span class="value" id="val-dpf" style="color:#555;">OFF</span></div></div>
+    </div>
+
+    <script>
+        const face = document.getElementById('mascot-face');
+        const mouth = document.getElementById('mouth');
+        const voicePlayer = new Audio();
+        let currentSpeakId = 0;
+
+        function clearExpression() { face.classList.remove('happy', 'looking-left', 'looking-right'); }
+
+        setInterval(() => {
+            if (!face.classList.contains('happy')) {
+                const rand = Math.random();
+                clearExpression();
+                if (rand < 0.15) face.classList.add('looking-left');
+                else if (rand > 0.85) face.classList.add('looking-right');
+                setTimeout(() => {
+                    if (!face.classList.contains('happy')) face.classList.remove('looking-left', 'looking-right');
+                }, 1500);
+            }
+        }, 4000);
+
+        function triggerHappyMode(duration = 4000) {
+            clearExpression();
+            face.classList.add('happy');
+            setTimeout(() => { face.classList.remove('happy'); }, duration);
+        }
+
+        // --- 音声合成 ---
+        async function speak(text, callback) {
+            const speakerId = 3;
+            currentSpeakId++;
+            const mySpeakId = currentSpeakId;
+            window.speechSynthesis.cancel();
+            voicePlayer.pause();
+            voicePlayer.removeAttribute('src');
+            voicePlayer.load();
+            try {
+                mouth.classList.add('speaking');
+                const url = `https://api.tts.quest/v3/voicevox/synthesis?text=${encodeURIComponent(text)}&speaker=${speakerId}`;
+                const response = await fetch(url);
+                const data = await response.json();
+                if (mySpeakId !== currentSpeakId) return;
+                if (data.mp3StreamingUrl) {
+                    voicePlayer.src = data.mp3StreamingUrl;
+                    voicePlayer.onended = () => { mouth.classList.remove('speaking'); if (callback) callback(); };
+                    try { await voicePlayer.play(); } catch (playErr) { console.warn("再生がキャンセルされました", playErr); }
+                } else { throw new Error("音声URLがありません"); }
+            } catch (error) {
+                if (mySpeakId !== currentSpeakId) return;
+                console.warn("VOICEVOX通信エラー。予備音声に切り替え:", error);
+                fallbackSpeak(text, callback);
+            }
+        }
+
+        function fallbackSpeak(text, callback) {
+            window.speechSynthesis.cancel();
+            const uttr = new SpeechSynthesisUtterance(text);
+            uttr.lang = 'ja-JP'; uttr.pitch = 1.4; uttr.rate = 1.1;
+            uttr.onstart = () => mouth.classList.add('speaking');
+            uttr.onend = () => { mouth.classList.remove('speaking'); if (callback) callback(); };
+            window.speechSynthesis.speak(uttr);
+        }
+
+        // --- 状態管理 ---
+        let isColdEngine = true;
+        let isDpfRegenerating = false;
+
+        function updateUI(id, value) { document.getElementById(id).innerText = value; }
+
+        let pmWarned = false, distWarned = false, lastKm = null;
+        function checkExtras(data) {
+            const pmMax = Math.max(data.pm ?? 0, data.pmGen ?? 0);
+            if (data.pm !== undefined || data.pmGen !== undefined) {
+                if (!pmWarned && pmMax >= 6) {
+                    pmWarned = true;
+                    speak("煤がけっこう溜まってきたのだ。そろそろDPF再生が始まるかもしれないのだ。");
+                }
+                if (pmWarned && pmMax < 3) pmWarned = false;
+            }
+            if (data.dpfDistance !== undefined) {
+                if (!distWarned && data.dpfDistance >= 400) {
+                    distWarned = true;
+                    speak(`前回のDPF再生から${data.dpfDistance}キロ走ったのだ。そろそろ再生の時期なのだ。`);
+                }
+                if (distWarned && data.dpfDistance < 100) distWarned = false;
+            }
+            if (data.totalDist !== undefined) {
+                const km = Math.floor(data.totalDist / 1000);
+                if (lastKm !== null && km > lastKm) {
+                    triggerHappyMode(4000);
+                    speak(`走行距離が${km * 1000}キロに到達したのだ！おめでとうなのだ！`);
+                }
+                lastKm = km;
+            }
+        }
+
+        function checkVehicleStatus(data) {
+            checkExtras(data);
+            if (data.waterTemp !== undefined) {
+                if (isColdEngine && data.waterTemp >= 55) {
+                    isColdEngine = false;
+                    triggerHappyMode(4000);
+                    speak("水温計の青ランプが消えたのだ！エンジンがあったまったのだ！");
+                }
+                if (!isColdEngine && data.waterTemp < 50) isColdEngine = true;
+            }
+            if (!isDpfRegenerating && data.dpfStatus === true) {
+                isDpfRegenerating = true;
+                document.getElementById('val-dpf').innerText = "ON";
+                document.getElementById('val-dpf').classList.add('active');
+                const dist = (data.dpfDistance !== undefined) ? `前回から${data.dpfDistance}キロ走ったのだ。` : "";
+                speak(`DPFの再生が始まったのだ。${dist}`);
+            }
+            if (isDpfRegenerating && data.dpfStatus === false) {
+                isDpfRegenerating = false;
+                document.getElementById('val-dpf').innerText = "OFF";
+                document.getElementById('val-dpf').classList.remove('active');
+                triggerHappyMode(5000);
+                speak("DPFの再生が終わったのだ！スッキリなのだ！");
+            }
+        }
+
+        // =====================================================
+        //  OBD2 / ELM327 over BLE
+        // =====================================================
+        const BLE_SERVICES = [
+            '000018f0-0000-1000-8000-00805f9b34fb', // Veepeak BLE+ でよく使われる
+            '0000fff0-0000-1000-8000-00805f9b34fb',
+            '0000ffe0-0000-1000-8000-00805f9b34fb',
+            'e7810a71-73ae-499d-8c15-faa9aef0c3f2'
+        ];
+
+        // ★ ポーリングするPID一覧。every=N周に1回取得。
+        // cmd が "01xx" は標準PID、"22xxxx" はマツダ拡張(Mode22)。
+        // parse(b, d): b=データバイト配列, d=これまでに取得済みの値。戻り値が表示値。
+        const PIDS = [
+            // 距離は再生中に値が変わるため、再生中は更新せず、再生状態より先に取得する
+            { key: 'dpfDistance', cmd: '220434', every: 10, ui: 'val-dpfdist', skipWhen: () => isDpfRegenerating,
+              parse: b => Math.round(((b[1] << 16) + (b[2] << 8) + b[3]) * 100 / 65536) },
+            { key: 'dpfStatus',  cmd: '220380', every: 2, parse: b => ((b[0] >> 1) & 1) === 1 },
+            { key: 'waterTemp',  cmd: '0105',   every: 1, ui: 'val-watertemp', parse: b => b[0] - 40 },
+            { key: 'imap',       cmd: '22F470', every: 1, parse: b => (b[3] * 256 + b[4]) / 32 },   // 吸気マニ絶対圧 kPa
+            { key: 'baro',       cmd: '0133',   every: 30, parse: b => b[0] },
+            { key: 'boost',      derive: d => (d.imap !== undefined && d.baro !== undefined) ? d.imap - d.baro : undefined, ui: 'val-boost' },
+            { key: 'pm',         cmd: '22042C', every: 2, ui: 'val-pm', dec: 2, parse: b => (b[0] * 256 + b[1]) * 100 / 65536 },  // PM堆積量 g/l
+            { key: 'pmGen',      cmd: '22042D', every: 4, parse: b => (b[0] * 256 + b[1]) * 100 / 65536 },                 // PM生成量（再生後の累計・再生の引き金）
+            { key: 'egt',        cmd: '0178',   every: 3, ui: 'val-egt', parse: b => (b[5] * 256 + b[6]) / 10 - 40 },       // 排気温 Bank1 Sensor3（要確認）
+            { key: 'intakeTemp', cmd: '010F',   every: 4, ui: 'val-intaketemp', parse: b => b[0] - 40 },
+            { key: 'oilTemp',    cmd: '015C',   every: 6, ui: 'val-oiltemp', parse: b => b[0] - 40 },                       // 非対応の可能性あり
+            { key: 'battery',    cmd: '224028', every: 10, ui: 'val-batt', parse: b => b[0] },
+            { key: 'totalDist',  cmd: '22DD01', every: 60, parse: b => (b[0] << 16) + (b[1] << 8) + b[2] }
+        ];
+
+        let bleDevice = null, writeChar = null, notifyChar = null;
+        let connected = false;
+        let rxBuf = '', pending = null, chain = Promise.resolve();
+        const decoder = new TextDecoder(), encoder = new TextEncoder();
+        const vehicle = {};
+
+        function log(s) {
+            const el = document.getElementById('log');
+            el.textContent += s + '\n';
+            if (el.textContent.length > 6000) el.textContent = el.textContent.slice(-4000);
+            el.scrollTop = el.scrollHeight;
+        }
+        function toggleDebug() {
+            const d = document.getElementById('debug');
+            d.style.display = d.style.display === 'block' ? 'none' : 'block';
+        }
+        async function sendRaw() {
+            const inp = document.getElementById('rawcmd');
+            if (!connected || !inp.value) return;
+            await send(inp.value.trim());
+        }
+
+        function onNotify(ev) {
+            rxBuf += decoder.decode(ev.target.value);
+            if (rxBuf.includes('>')) {
+                const r = rxBuf; rxBuf = '';
+                if (pending) { const p = pending; pending = null; p(r); }
+            }
+        }
+
+        async function writeChunks(str) {
+            const bytes = encoder.encode(str);
+            for (let i = 0; i < bytes.length; i += 20) {
+                const chunk = bytes.slice(i, i + 20);
+                if (writeChar.writeValueWithoutResponse) await writeChar.writeValueWithoutResponse(chunk);
+                else await writeChar.writeValue(chunk);
+            }
+        }
+
+        // 1コマンドずつ直列に送り、">" が返るまで待つ
+        function send(cmd, timeout = 4000) {
+            chain = chain.then(() => new Promise(resolve => {
+                rxBuf = '';
+                const t = setTimeout(() => { pending = null; log(`${cmd} -> TIMEOUT`); resolve('TIMEOUT'); }, timeout);
+                pending = r => { clearTimeout(t); log(`${cmd} -> ${r.replace(/[\r\n>]+/g, ' ').trim()}`); resolve(r); };
+                writeChunks(cmd + '\r').catch(e => { clearTimeout(t); pending = null; log(`${cmd} -> ERR ${e}`); resolve('ERR'); });
+            }));
+            return chain;
+        }
+
+        // レスポンスからデータバイト配列を取り出す。失敗時は null
+        function parseResponse(cmd, raw) {
+            let lines = raw.replace(/SEARCHING\.\.\./gi, '').split(/[\r\n]+/).map(l => l.replace(/[\s>]/g, '').toUpperCase()).filter(Boolean);
+            if (lines.some(l => /^[0-9A-F]:/.test(l))) { // ISO-TPマルチフレーム: 長さ行と "0:" "1:" を除去
+                lines = lines.filter(l => /^[0-9A-F]:/.test(l)).map(l => l.slice(2));
+            }
+            const clean = lines.join('');
+            if (/NODATA|ERROR|UNABLE|\?|STOPPED|TIMEOUT|ERR/.test(clean)) return null;
+            const expected = (parseInt(cmd.slice(0, 2), 16) + 0x40).toString(16).toUpperCase().padStart(2, '0') + cmd.slice(2).toUpperCase();
+            const idx = clean.indexOf(expected);
+            if (idx < 0) return null;
+            const hex = clean.slice(idx + expected.length);
+            const bytes = [];
+            for (let i = 0; i + 1 < hex.length; i += 2) {
+                const v = parseInt(hex.substr(i, 2), 16);
+                if (isNaN(v)) break;
+                bytes.push(v);
+            }
+            return bytes.length ? bytes : null;
+        }
+
+        async function initElm() {
+            await send('ATZ', 4000);
+            for (const c of ['ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATSP0']) await send(c);
+            const r = await send('0100', 12000); // プロトコル自動検出
+            if (/UNABLE|ERROR|TIMEOUT|ERR/i.test(r)) return false;
+            await send('ATSH 7E0'); // エンジンECU宛
+            return true;
+        }
+
+        async function pollLoop() {
+            let tick = 0, failCount = 0;
+            while (connected) {
+                while (scanning) await new Promise(r => setTimeout(r, 200));
+                tick++;
+                for (const p of PIDS) {
+                    if (!connected) return;
+                    if (p.enabled === false || (p.skipWhen && p.skipWhen())) continue;
+                    if (tick % (p.every || 1) !== 1 && (p.every || 1) !== 1) continue;
+                    if (p.derive) {
+                        vehicle[p.key] = p.derive(vehicle);
+                    } else {
+                        const raw = await send(p.cmd);
+                        const bytes = parseResponse(p.cmd, raw);
+                        if (!bytes) {
+                            if (++failCount > 40) { log('応答なしが続いています'); failCount = 0; }
+                            continue;
+                        }
+                        failCount = 0;
+                        try { vehicle[p.key] = p.parse(bytes, vehicle); } catch (e) { continue; }
+                    }
+                    const v = vehicle[p.key];
+                    if (p.ui && v !== undefined && !isNaN(v)) updateUI(p.ui, p.dec ? v.toFixed(p.dec) : Math.round(v));
+                }
+                checkVehicleStatus(vehicle);
+            }
+        }
+
+        // 対応PIDの診断（候補PIDを1回ずつ試してログに出す）
+        let scanning = false;
+        const SCAN_EXTRA = [
+            ['22F433', '大気圧(Mazda)'], ['22F446', '過給後吸気温'], ['22F47A', 'DPF差圧'], ['220432', 'DPF再生回数'],
+            ['22044B', 'PM堆積(目標)'], ['22042D', 'PM生成量'], ['220435', 'オイル希釈回数'], ['2203E1', 'オイル希釈量'],
+            ['220522', '燃料温度'], ['2203DF', 'VGT開度'], ['2203FB', 'EGR開度'], ['22F469', 'EGR A/B'], ['220519', 'オイル交換距離']
+        ];
+        async function scanPids() {
+            if (!connected) { speak("先にVeepeakとつなぐのだ。"); return; }
+            document.getElementById('debug').style.display = 'block';
+            scanning = true;
+            log('--- PID診断 開始 ---');
+            const list = PIDS.filter(p => p.cmd && p.enabled !== false).map(p => [p.cmd, p.key]).concat(SCAN_EXTRA);
+            for (const [cmd, name] of list) {
+                const bytes = parseResponse(cmd, await send(cmd));
+                log(`${bytes ? 'OK' : 'NG'}  ${cmd} ${name}${bytes ? ' [' + bytes.join(',') + ']' : ''}`);
+            }
+            log('--- PID診断 終了 ---');
+            scanning = false;
+            speak("PIDの診断が終わったのだ。ログを見てほしいのだ。");
+        }
+
+        async function connectVeepeak() {
+            if (!navigator.bluetooth) { speak("このブラウザはBluetoothに対応していないのだ。"); return; }
+            if (demoInterval) { clearInterval(demoInterval); demoInterval = null; }
+            speak("Veepeakを探しているのだ。キョロキョロ。");
+            face.classList.add('looking-left');
+            setTimeout(() => { face.classList.replace('looking-left', 'looking-right'); }, 1000);
+
+            try {
+                bleDevice = await navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true,
+                    optionalServices: BLE_SERVICES
+                });
+                bleDevice.addEventListener('gattserverdisconnected', () => {
+                    if (!connected) return;
+                    connected = false;
+                    log('切断されました');
+                    speak("Bluetoothが切れちゃったのだ。もう一度つないでほしいのだ。");
+                });
+
+                const server = await bleDevice.gatt.connect();
+                const services = await server.getPrimaryServices();
+                writeChar = notifyChar = null;
+                for (const s of services) {
+                    for (const c of await s.getCharacteristics()) {
+                        log(`char ${s.uuid.slice(4, 8)}/${c.uuid.slice(4, 8)}`);
+                        if (!notifyChar && (c.properties.notify || c.properties.indicate)) notifyChar = c;
+                        if (!writeChar && (c.properties.write || c.properties.writeWithoutResponse)) writeChar = c;
+                    }
+                }
+                if (!notifyChar || !writeChar) throw new Error("Tx/Rxが見つかりません");
+
+                await notifyChar.startNotifications();
+                notifyChar.addEventListener('characteristicvaluechanged', onNotify);
+                connected = true;
+
+                const ok = await initElm();
+                if (!ok) {
+                    connected = false;
+                    clearExpression();
+                    speak("エンジンと話せないのだ。エンジンをかけてからやり直してほしいのだ。");
+                    return;
+                }
+
+                clearExpression();
+                triggerHappyMode(5000);
+                speak("接続完了なのだ！デミオとリンク完了、今日も安全運転で行くのだ！");
+                pollLoop();
+
+            } catch (error) {
+                connected = false;
+                clearExpression();
+                console.warn("Bluetooth接続エラー:", error);
+                log('接続エラー: ' + error);
+                speak("接続がキャンセルされたか、失敗したのだ。もう一度試してほしいのだ。");
+            }
+        }
+
+        // --- デモ ---
+        let demoInterval;
+        function startDemo() {
+            if (demoInterval) clearInterval(demoInterval);
+            isColdEngine = true;
+            isDpfRegenerating = false;
+            triggerHappyMode(3000);
+            speak("デモ走行、スタートなのだ！");
+
+            let simData = { waterTemp: 45, intaketemp: 25, boost: -60, oiltemp: 40, oilpress: 200, dpfStatus: false, dpfDistance: 215, pm: 4, egt: 120, battery: 78 };
+            let tick = 0;
+            demoInterval = setInterval(() => {
+                tick++;
+                simData.waterTemp += (simData.waterTemp < 90) ? 1.5 : 0;
+                simData.oiltemp += (simData.oiltemp < 95) ? 1 : 0;
+                simData.boost = Math.floor(Math.random() * 100) - 50;
+                simData.oilpress = 150 + Math.floor(Math.random() * 100);
+                simData.pm = Math.min(7, simData.pm + 0.15); simData.egt = Math.min(350, simData.egt + 8);
+                if (tick === 10) simData.dpfStatus = true;
+                if (tick === 25) simData.dpfStatus = false;
+                updateUI('val-watertemp', Math.floor(simData.waterTemp));
+                updateUI('val-intaketemp', simData.intaketemp);
+                updateUI('val-boost', simData.boost);
+                updateUI('val-oiltemp', Math.floor(simData.oiltemp));
+                updateUI('val-pm', simData.pm.toFixed(2));
+                updateUI('val-egt', Math.floor(simData.egt));
+                updateUI('val-dpfdist', simData.dpfDistance);
+                updateUI('val-batt', simData.battery);
+                checkVehicleStatus(simData);
+            }, 1000);
+        }
+    </script>
+</body>
+</html>
