@@ -64,6 +64,7 @@
         #debug pre { flex: 1; overflow-y: auto; margin: 0 0 8px; color: #9f9; white-space: pre-wrap; word-break: break-all; font-size: 14px; }
         #debug input { flex: 1; min-width: 120px; padding: 10px; font-size: 15px; background: #222; color: #fff; border: 1px solid #555; }
         #debug button { padding: 10px 14px; margin: 0; font-size: 14px; }
+        #debug select { padding: 8px; font-size: 13px; background: #222; color: #fff; border: 1px solid #555; max-width: 45%; }
     </style>
 </head>
 <body>
@@ -93,6 +94,14 @@
         <div class="bar">
             <input id="rawcmd" placeholder="例: 0105 / 0100 / 22XXXX">
             <button onclick="sendRaw()">送信</button>
+        </div>
+        <div class="bar">
+            <button onclick="quick('ATI')">ATI</button>
+            <button onclick="quick('ATRV')">ATRV</button>
+            <button onclick="quick('ATZ')">ATZ</button>
+            <select id="wsel" onchange="pickWrite()"></select>
+            <select id="term"><option value="\r">末尾 CR</option><option value="\r\n">CR+LF</option><option value="\n">LF</option><option value="">なし</option></select>
+            <select id="wmode"><option value="auto">書込 自動</option><option value="resp">応答あり</option><option value="noresp">応答なし</option></select>
         </div>
     </div>
 
@@ -417,6 +426,22 @@
             const d = document.getElementById('debug');
             d.style.display = d.style.display === 'flex' ? 'none' : 'flex';
         }
+        function quick(cmd) { if (connected) send(cmd, 5000); else log('未接続です'); }
+        function pickWrite() {
+            const i = document.getElementById('wsel').value;
+            if (writeCands[i]) { writeChar = writeCands[i]; log('書込先: ' + writeChar.uuid); }
+        }
+        function fillWriteSelect() {
+            const sel = document.getElementById('wsel');
+            sel.innerHTML = '';
+            writeCands.forEach((c, i) => {
+                const o = document.createElement('option');
+                o.value = i; o.textContent = '書込 ' + c.uuid.slice(0, 13);
+                sel.appendChild(o);
+            });
+            const cur = writeCands.indexOf(writeChar);
+            if (cur >= 0) sel.value = cur;
+        }
         async function sendRaw() {
             const inp = document.getElementById('rawcmd');
             if (!connected || !inp.value) return;
@@ -437,7 +462,10 @@
             const bytes = encoder.encode(str);
             for (let i = 0; i < bytes.length; i += 20) {
                 const chunk = bytes.slice(i, i + 20);
-                if (writeChar.properties.writeWithoutResponse) await writeChar.writeValueWithoutResponse(chunk);
+                const mode = document.getElementById('wmode').value;
+                const noResp = mode === 'noresp' || (mode === 'auto' && writeChar.properties.writeWithoutResponse);
+                if (noResp) await writeChar.writeValueWithoutResponse(chunk);
+                else if (writeChar.writeValueWithResponse) await writeChar.writeValueWithResponse(chunk);
                 else await writeChar.writeValue(chunk);
             }
         }
@@ -448,7 +476,7 @@
                 rxBuf = '';
                 const t = setTimeout(() => { pending = null; log(`${cmd} -> TIMEOUT (受信済み: ${JSON.stringify(rxBuf)})`); resolve('TIMEOUT'); }, timeout);
                 pending = r => { clearTimeout(t); log(`${cmd} -> ${r.replace(/[\r\n>]+/g, ' ').trim()}`); resolve(r); };
-                writeChunks(cmd + '\r').catch(e => { clearTimeout(t); pending = null; log(`${cmd} -> ERR ${e}`); resolve('ERR'); });
+                writeChunks(cmd + document.getElementById('term').value.replace(/\\r/g, '\r').replace(/\\n/g, '\n')).catch(e => { clearTimeout(t); pending = null; log(`${cmd} -> ERR ${e}`); resolve('ERR'); });
             }));
             return chain;
         }
@@ -632,6 +660,7 @@
                 }
                 writeCands.sort((x, y) => (isN(y) ? 1 : 0) - (isN(x) ? 1 : 0));
                 writeChar = writeCands[0];
+                fillWriteSelect();
                 if (!notifyChars.length || !writeChar) throw new Error("Tx/Rxが見つかりません");
 
                 for (const c of notifyChars) {
@@ -646,9 +675,12 @@
 
                 const ok = await initElm();
                 if (!ok) {
-                    connected = false;
+                    // 接続は保ったまま、ログ画面で手動診断できるようにする
+                    fillWriteSelect();
+                    document.getElementById('debug').style.display = 'flex';
+                    log('初期化に失敗。手動診断モード：ATI/ATRVを送り、書込先・末尾・書込方法を変えて試してください');
                     clearExpression();
-                    speak("エンジンと話せないのだ。エンジンをかけてからやり直してほしいのだ。");
+                    speak("アダプターが返事をしないのだ。ログ画面で手動診断してほしいのだ。");
                     return;
                 }
 
